@@ -31,30 +31,30 @@ exec ros -Q -- $0 "$@"
 (defun is-family-pack (pack-name system-name)
   (ppcre:scan (format nil "~A.*" system-name) pack-name))
 
+;; Use a queue rather than a stack because I think that the depth first search (by stack) puts elder nodes in a package tree away.
+(defvar *target-pack-queue* nil)
+(defvar *processed-pack-list* nil)
+
+(defun queue-pack-name (pack-name system-name)
+  (unless (or (not (is-family-pack pack-name system-name))
+              (find pack-name *target-pack-queue* :test #'string=)
+              (find pack-name *processed-pack-list* :test #'string=))
+    (setf *target-pack-queue*
+          (nreverse (cons pack-name (nreverse *target-pack-queue*))))))
+
+(defun dequeue-pack-name ()
+  (awhen (pop *target-pack-queue*)
+    (push it *processed-pack-list*)
+    it))
+
 ;; ----- read file ----- ;;
-
-(defun find-defpackage (lst)
-  (cond ((or (null lst) (not (listp lst))) nil)
-        ((eq (car lst) 'defpackage) lst)
-        (t (dolist (child lst)
-             (awhen (find-defpackage child)
-               (return-from find-defpackage it)))
-           nil)))
-
-(defun make-file-lst-from-defsystem (system-name)
-  ;; TODO: process the component that belongs to no module
-  ;; TODO: process modules recursively
-  (let ((result))
-    (dolist (module (asdf:module-components (asdf:find-system (string-downcase system-name))))
-      (dolist (file  (asdf:module-components module))
-        (push (asdf:component-pathname file) result)))
-    result))
 
 (defun interpret-package (target-pack-name system-name)
   (let ((export-lst nil)
         (import-hash (make-hash-table)))
     (do-symbols (sym target-pack-name)
       (let ((pack-name (package-name (symbol-package sym))))
+        (queue-pack-name pack-name system-name)
         (cond ((string= pack-name target-pack-name)
                (multiple-value-bind (found type) (find-symbol (symbol-name sym) pack-name)
                  (declare (ignore found))
@@ -95,7 +95,7 @@ exec ros -Q -- $0 "$@"
              ($width "0.1")
              ($height "0.1")))))
 
-(let* ((color-lst '("red" "blue" "black" "green" "skyblue" "gold" "brown" "gray"))
+(let* ((color-lst '("red" "blue" "black" "green" "skyblue" "gold" "brown" "gray" "Turquoise"))
       (color-pnt color-lst))
   (defun edge-color ()
     (car color-pnt))
@@ -155,14 +155,10 @@ exec ros -Q -- $0 "$@"
   (let ((system-name (string-upcase (car argv)))
         (graph (make-graph-parts)))
     (ql:quickload system-name)
-    (dolist (file-name (make-file-lst-from-defsystem system-name))
-      (print file-name)
-      (with-open-file (in file-name :direction :input)
-        (do ((elem (read in nil) (read in nil)))
-            ((null elem))
-          (awhen (find-defpackage elem)
-            (add-info-to-graph graph
-                               (interpret-package (cadr it) system-name)
-                               system-name)
-            (return)))))
+    (do ((pack-name system-name (dequeue-pack-name)))
+        ((null pack-name))
+      (print pack-name)
+      (add-info-to-graph graph
+                         (interpret-package pack-name system-name)
+                         system-name))
     (render-graph graph)))
