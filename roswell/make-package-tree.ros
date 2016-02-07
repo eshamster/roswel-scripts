@@ -10,7 +10,7 @@ exec ros -Q -- $0 "$@"
   (dolist (pack *install-list*)
     (ql:quickload pack :silent t))
   (use-package :anaphora)
-  ; enable to write as "$node" instead of "s-dot::node"
+  ;; enable to write as "$node" instead of "s-dot::node"
   (set-macro-character #\$ #'(lambda (stream &rest rest)
                                (declare (ignore rest))
                                (let ((sym (read stream nil)))
@@ -26,23 +26,28 @@ exec ros -Q -- $0 "$@"
   cluster-lst
   edge-lst)
 
-; ----- read file ----- ;
+;; ----- utils ----- ;;
+
+(defun is-family-pack (pack-name system-name)
+  (ppcre:scan (format nil "~A.*" system-name) pack-name))
+
+;; ----- read file ----- ;;
 
 (defun find-defpackage (lst)
   (cond ((or (null lst) (not (listp lst))) nil)
         ((eq (car lst) 'defpackage) lst)
         (t (dolist (child lst)
-             (aif (find-defpackage child)
-                  (return-from find-defpackage it)))
+             (awhen (find-defpackage child)
+               (return-from find-defpackage it)))
            nil)))
 
 (defun make-file-lst-from-defsystem (system-name)
-  ; TODO: process the component that belongs to no module
-  ; TODO: process modules recursively
+  ;; TODO: process the component that belongs to no module
+  ;; TODO: process modules recursively
   (let ((result))
     (dolist (module (asdf:module-components (asdf:find-system (string-downcase system-name))))
       (dolist (file  (asdf:module-components module))
-        (setf result (cons (asdf:component-pathname file) result))))
+        (push (asdf:component-pathname file) result)))
     result))
 
 (defun interpret-defpackage (lst system-name)
@@ -56,7 +61,7 @@ exec ros -Q -- $0 "$@"
                  (declare (ignore found))
                  (when (eq type :external)
                    (push sym export-lst))))
-              ((ppcre:scan (format nil "~A.*" system-name) pack-name)
+              ((is-family-pack pack-name system-name)
                (push sym (gethash pack-name import-hash))))))
     (make-package-info :name (cadr lst)
                        :use-lst (mapcar #'package-name
@@ -64,7 +69,7 @@ exec ros -Q -- $0 "$@"
                        :export-lst export-lst
                        :import-lst import-hash)))
 
-; ----- make graph ----- ;
+;; ----- make graph ----- ;;
 
 (defun format-name (name)
   (let ((s-name (if (symbolp name)
@@ -79,8 +84,8 @@ exec ros -Q -- $0 "$@"
              (ppcre:regex-replace-all "-" s-name "_")
              "__")))))))
 
-; In graphviz, because we can't directly draw edges from a cluster,
-; draw them from the 'master' node that has no label, instead.
+;; In graphviz, because we can't directly draw edges from a cluster,
+;; draw them from the 'master' node that has no label, instead.
 (defun make-master-node-name (name)
   (format nil "MASTER_~A" (format-name name)))
 
@@ -119,34 +124,31 @@ exec ros -Q -- $0 "$@"
 (defun add-info-to-graph (graph pack-info system-name &key (renders-with-symbol t))
   (change-edge-color)
   (with-slots (name use-lst export-lst import-lst) pack-info
-    (slet (graph-parts-cluster-lst graph)
-      (setf it (cons (cluster name
-                              (if renders-with-symbol export-lst nil))
-                     it)))
+    (push (cluster name (when renders-with-symbol export-lst))
+          (graph-parts-cluster-lst graph))
     (slet (graph-parts-edge-lst graph)
       (let ((master-name (make-master-node-name name)))
         (dolist (use (remove-if (lambda (pack-name)
-                                  (not (ppcre:scan (format nil "~A.*" system-name)
-                                                   pack-name)))
+                                  (not (is-family-pack pack-name system-name)))
                                 use-lst))
-          (setf it (cons (edge master-name (make-master-node-name use)) it)))
+          (push (edge master-name (make-master-node-name use))
+                it))
         (maphash (lambda (pack-name sym-lst)
                    (unless (find pack-name use-lst :test #'string=)
                      (if renders-with-symbol
                          (dolist (elem sym-lst)
-                           (setf it (cons (edge master-name elem)
-                                          it)))
-                         (setf it (cons (edge master-name
-                                              (make-master-node-name pack-name))
-                                        it)))))
+                           (push (edge master-name elem)
+                                 it))
+                         (push (edge master-name (make-master-node-name pack-name))
+                               it))))
                  import-lst))))
   graph)
 
 (defun render-graph (graph)
-  (s-dot:render-s-dot #p"/var/www/html/esh/temp3.png" "png"
-                      `($graph (($rankdir "LR"))
-                               ,@(graph-parts-cluster-lst graph)
-                               ,@(graph-parts-edge-lst graph))))
+  ($render-s-dot #p"/var/www/html/esh/temp.png" "png"
+                 `($graph (($rankdir "LR"))
+                          ,@(graph-parts-cluster-lst graph)
+                          ,@(graph-parts-edge-lst graph))))
 
 (defun main (&rest argv)
   (declare (ignorable argv))
@@ -157,13 +159,11 @@ exec ros -Q -- $0 "$@"
     (dolist (file-name (make-file-lst-from-defsystem system-name))
       (print file-name)
       (with-open-file (in file-name :direction :input)
-        (block blk-loop
-          (loop (aif (read in nil)
-                     (let ((definition (find-defpackage it)))
-                       (when definition
-                         (add-info-to-graph graph
-                                            (interpret-defpackage definition system-name)
-                                            system-name)
-                         (return-from blk-loop)))
-                     (return-from blk-loop))))))
+        (do ((elem (read in nil) (read in nil)))
+            ((null elem))
+          (awhen (find-defpackage elem)
+            (add-info-to-graph graph
+                               (interpret-defpackage it system-name)
+                               system-name)
+            (return)))))
     (render-graph graph)))
