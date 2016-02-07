@@ -1,0 +1,156 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+
+(defparameter *install-list* '(:anaphora :s-dot :cl-ppcre))
+
+(eval-when (:execute)
+  (dolist (pack *install-list*)
+    (ql:quickload pack))
+  (use-package :anaphora)
+  ; enable to write as "$node" instead of "s-dot::node"
+  (set-macro-character #\$ #'(lambda (stream &rest rest)
+                               (declare (ignore rest))
+                               (let ((sym (read stream nil)))
+                                 (intern (symbol-name sym) "S-DOT")))))
+
+(defstruct package-info
+  name
+  use-lst
+  export-lst
+  import-lst)
+
+(defstruct graph-parts
+  cluster-lst
+  edge-lst)
+
+; ----- read file ----- ;
+
+(defun find-defpackage (lst)
+  (cond ((or (null lst) (not (listp lst))) nil)
+        ((eq (car lst) 'defpackage) lst)
+        (t (dolist (child lst)
+             (aif (find-defpackage child)
+                  (return-from find-defpackage it)))
+           nil)))
+
+(defun make-file-lst-from-defsystem (package-name)
+  ; TODO: process the component that belongs to no module
+  ; TODO: process modules recursively
+  (let ((result))
+    (dolist (module (asdf:module-components (asdf:find-system package-name)))
+      (dolist (file  (asdf:module-components module))
+        (setf result (cons (asdf:component-pathname file) result))))
+    result))
+
+(defun interpret-defpackage (lst)
+  (labels ((is-label (key elem)
+             (and (listp elem) (eq key (car elem))))
+           (find-label (key lst)
+             (cdr (find-if #'(lambda (elem) (is-label key elem))
+                           lst))))
+    (make-package-info :name (cadr lst)
+                       :use-lst (find-label :use lst)
+                       :export-lst (find-label :export lst)
+                       :import-lst (mapcar #'cdr
+                                           (remove-if-not
+                                            #'(lambda (elem) (is-label :import-from elem))
+                                            lst)))))
+
+; ----- make graph ----- ;
+
+(defun format-name (name)
+  (let ((s-name (if (symbolp name)
+                    (symbol-name name)
+                    name)))
+    (string-upcase
+     (car (last
+           (ppcre:split
+            "\\."
+            (ppcre:regex-replace-all
+             "[\\+\\*]" 
+             (ppcre:regex-replace-all "-" s-name "_")
+             "__")))))))
+
+; In graphviz, because we can't directly draw edges from a cluster,
+; draw them from the 'master' node that has no label, instead.
+(defun make-master-node-name (name)
+  (format nil "MASTER_~A" (format-name name)))
+
+(defun node (name)
+  (alet (format-name name)
+    `($node (($id ,it)
+             ($label ,it)
+             ($width "0.1")
+             ($height "0.1")))))
+
+(let* ((color-lst '("red" "blue" "black" "green" "skyblue" "gold" "brown" "gray"))
+      (color-pnt color-lst))
+  (defun edge-color ()
+    (car color-pnt))
+  (defun change-edge-color ()
+    (aif (cdr color-pnt)
+         (setf color-pnt it)
+         (setf color-pnt color-lst))))
+
+(defun edge (from to)
+  `($edge (($from ,(format-name from))
+           ($to ,(format-name to))
+           ($color ,(edge-color)))))
+
+(defun cluster (name node-keyward-lst)
+  (let ((fname (format-name name)))
+    `($cluster (($id ,fname)
+                ($label ,fname))
+               ($node (($id ,(make-master-node-name name))
+                       ($label "")
+                       ($width "0.1")
+                       ($height "0.1")))
+               ,@(mapcar #'(lambda (elem) (node (format-name elem)))
+                         node-keyward-lst))))
+
+(defun add-info-to-graph (graph pack-info &key (renders-with-symbol t))
+  (change-edge-color)
+  (with-slots (name use-lst export-lst import-lst) pack-info
+    (slet (graph-parts-cluster-lst graph)
+      (setf it (cons (cluster name
+                              (if renders-with-symbol export-lst nil))
+                     it)))
+    (slet (graph-parts-edge-lst graph)
+      (let ((master-name (make-master-node-name name)))
+        (dolist (use use-lst)
+          (unless (equal use :cl)
+            (setf it (cons (edge master-name (make-master-node-name use)) it))))
+        (dolist (import import-lst)
+          (if renders-with-symbol
+              (dolist (elem (cdr import))
+                (setf it (cons (edge master-name elem)
+                               it)))
+              (setf it (cons (edge master-name
+                                   (make-master-node-name (car import)))
+                             it)))))))
+  graph)
+
+(defun render-graph (graph)
+  (s-dot:render-s-dot #p"/var/www/html/esh/temp.png" "png"
+                      `($graph (($rankdir "LR"))
+                               ,@(graph-parts-cluster-lst graph)
+                               ,@(graph-parts-edge-lst graph))))
+
+(defun main (&rest argv)
+  (declare (ignorable argv))
+  (assert (> (length argv) 0))
+  (let ((graph (make-graph-parts)))
+    (dolist (file-name (make-file-lst-from-defsystem (car argv)))
+      (print file-name)
+      (with-open-file (in file-name :direction :input)
+        (block blk-loop
+          (loop (aif (read in nil)
+                     (let ((definition (find-defpackage it)))
+                       (when definition
+                         (add-info-to-graph graph (interpret-defpackage definition))
+                         (return-from blk-loop)))
+                     (return-from blk-loop))))))
+    (render-graph graph)))
