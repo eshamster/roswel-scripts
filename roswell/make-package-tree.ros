@@ -8,7 +8,7 @@ exec ros -Q -- $0 "$@"
 
 (eval-when (:execute)
   (dolist (pack *install-list*)
-    (ql:quickload pack))
+    (ql:quickload pack :silent t))
   (use-package :anaphora)
   ; enable to write as "$node" instead of "s-dot::node"
   (set-macro-character #\$ #'(lambda (stream &rest rest)
@@ -36,28 +36,33 @@ exec ros -Q -- $0 "$@"
                   (return-from find-defpackage it)))
            nil)))
 
-(defun make-file-lst-from-defsystem (package-name)
+(defun make-file-lst-from-defsystem (system-name)
   ; TODO: process the component that belongs to no module
   ; TODO: process modules recursively
   (let ((result))
-    (dolist (module (asdf:module-components (asdf:find-system package-name)))
+    (dolist (module (asdf:module-components (asdf:find-system (string-downcase system-name))))
       (dolist (file  (asdf:module-components module))
         (setf result (cons (asdf:component-pathname file) result))))
     result))
 
-(defun interpret-defpackage (lst)
-  (labels ((is-label (key elem)
-             (and (listp elem) (eq key (car elem))))
-           (find-label (key lst)
-             (cdr (find-if #'(lambda (elem) (is-label key elem))
-                           lst))))
+(defun interpret-defpackage (lst system-name)
+  (let ((target-pack-name (symbol-name (cadr lst)))
+        (export-lst nil)
+        (import-hash (make-hash-table)))
+    (do-symbols (sym (cadr lst))
+      (let ((pack-name (package-name (symbol-package sym))))
+        (cond ((string= pack-name target-pack-name)
+               (multiple-value-bind (found type) (find-symbol (symbol-name sym) pack-name)
+                 (declare (ignore found))
+                 (when (eq type :external)
+                   (push sym export-lst))))
+              ((ppcre:scan (format nil "~A.*" system-name) pack-name)
+               (push sym (gethash pack-name import-hash))))))
     (make-package-info :name (cadr lst)
-                       :use-lst (find-label :use lst)
-                       :export-lst (find-label :export lst)
-                       :import-lst (mapcar #'cdr
-                                           (remove-if-not
-                                            #'(lambda (elem) (is-label :import-from elem))
-                                            lst)))))
+                       :use-lst (mapcar #'package-name
+                                        (package-use-list (find-package target-pack-name)))
+                       :export-lst export-lst
+                       :import-lst import-hash)))
 
 ; ----- make graph ----- ;
 
@@ -111,7 +116,7 @@ exec ros -Q -- $0 "$@"
                ,@(mapcar #'(lambda (elem) (node (format-name elem)))
                          node-keyward-lst))))
 
-(defun add-info-to-graph (graph pack-info &key (renders-with-symbol t))
+(defun add-info-to-graph (graph pack-info system-name &key (renders-with-symbol t))
   (change-edge-color)
   (with-slots (name use-lst export-lst import-lst) pack-info
     (slet (graph-parts-cluster-lst graph)
@@ -120,21 +125,25 @@ exec ros -Q -- $0 "$@"
                      it)))
     (slet (graph-parts-edge-lst graph)
       (let ((master-name (make-master-node-name name)))
-        (dolist (use use-lst)
-          (unless (equal use :cl)
-            (setf it (cons (edge master-name (make-master-node-name use)) it))))
-        (dolist (import import-lst)
-          (if renders-with-symbol
-              (dolist (elem (cdr import))
-                (setf it (cons (edge master-name elem)
-                               it)))
-              (setf it (cons (edge master-name
-                                   (make-master-node-name (car import)))
-                             it)))))))
+        (dolist (use (remove-if (lambda (pack-name)
+                                  (not (ppcre:scan (format nil "~A.*" system-name)
+                                                   pack-name)))
+                                use-lst))
+          (setf it (cons (edge master-name (make-master-node-name use)) it)))
+        (maphash (lambda (pack-name sym-lst)
+                   (unless (find pack-name use-lst :test #'string=)
+                     (if renders-with-symbol
+                         (dolist (elem sym-lst)
+                           (setf it (cons (edge master-name elem)
+                                          it)))
+                         (setf it (cons (edge master-name
+                                              (make-master-node-name pack-name))
+                                        it)))))
+                 import-lst))))
   graph)
 
 (defun render-graph (graph)
-  (s-dot:render-s-dot #p"/var/www/html/esh/temp.png" "png"
+  (s-dot:render-s-dot #p"/var/www/html/esh/temp3.png" "png"
                       `($graph (($rankdir "LR"))
                                ,@(graph-parts-cluster-lst graph)
                                ,@(graph-parts-edge-lst graph))))
@@ -142,15 +151,19 @@ exec ros -Q -- $0 "$@"
 (defun main (&rest argv)
   (declare (ignorable argv))
   (assert (> (length argv) 0))
-  (let ((graph (make-graph-parts)))
-    (dolist (file-name (make-file-lst-from-defsystem (car argv)))
+  (let ((system-name (string-upcase (car argv)))
+        (graph (make-graph-parts)))
+    (ql:quickload system-name)
+    (dolist (file-name (make-file-lst-from-defsystem system-name))
       (print file-name)
       (with-open-file (in file-name :direction :input)
         (block blk-loop
           (loop (aif (read in nil)
                      (let ((definition (find-defpackage it)))
                        (when definition
-                         (add-info-to-graph graph (interpret-defpackage definition))
+                         (add-info-to-graph graph
+                                            (interpret-defpackage definition system-name)
+                                            system-name)
                          (return-from blk-loop)))
                      (return-from blk-loop))))))
     (render-graph graph)))
