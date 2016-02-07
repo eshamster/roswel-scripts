@@ -50,11 +50,10 @@ exec ros -Q -- $0 "$@"
         (push (asdf:component-pathname file) result)))
     result))
 
-(defun interpret-defpackage (lst system-name)
-  (let ((target-pack-name (symbol-name (cadr lst)))
-        (export-lst nil)
+(defun interpret-package (target-pack-name system-name)
+  (let ((export-lst nil)
         (import-hash (make-hash-table)))
-    (do-symbols (sym (cadr lst))
+    (do-symbols (sym target-pack-name)
       (let ((pack-name (package-name (symbol-package sym))))
         (cond ((string= pack-name target-pack-name)
                (multiple-value-bind (found type) (find-symbol (symbol-name sym) pack-name)
@@ -63,7 +62,7 @@ exec ros -Q -- $0 "$@"
                    (push sym export-lst))))
               ((is-family-pack pack-name system-name)
                (push sym (gethash pack-name import-hash))))))
-    (make-package-info :name (cadr lst)
+    (make-package-info :name target-pack-name
                        :use-lst (mapcar #'package-name
                                         (package-use-list (find-package target-pack-name)))
                        :export-lst export-lst
@@ -163,7 +162,7 @@ exec ros -Q -- $0 "$@"
             ((null elem))
           (awhen (find-defpackage elem)
             (add-info-to-graph graph
-                               (interpret-defpackage it system-name)
+                               (interpret-package (cadr it) system-name)
                                system-name)
             (return)))))
     (render-graph graph)))
