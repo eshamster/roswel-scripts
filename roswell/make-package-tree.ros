@@ -4,11 +4,8 @@
 exec ros -Q -- $0 "$@"
 |#
 
-(defparameter *install-list* '(:anaphora :s-dot :cl-ppcre))
-
 (eval-when (:execute)
-  (dolist (pack *install-list*)
-    (ql:quickload pack :silent t))
+  (ql:quickload '(:anaphora :s-dot :cl-ppcre) :silent t)
   (use-package :anaphora)
   ;; enable to write as "$node" instead of "s-dot::node"
   (set-macro-character #\$ #'(lambda (stream &rest rest)
