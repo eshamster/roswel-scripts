@@ -5,7 +5,7 @@ exec ros -Q -- $0 "$@"
 |#
 
 (eval-when (:execute)
-  (ql:quickload '(:anaphora :s-dot :cl-ppcre) :silent t)
+  (ql:quickload '(:anaphora :s-dot :cl-ppcre :cl-cli) :silent t)
   (use-package :anaphora)
   ;; enable to write as "$node" instead of "s-dot::node"
   (set-macro-character #\$ #'(lambda (stream &rest rest)
@@ -117,10 +117,10 @@ exec ros -Q -- $0 "$@"
                ,@(mapcar #'(lambda (elem) (node (format-name elem)))
                          node-keyward-lst))))
 
-(defun add-info-to-graph (graph pack-info system-name &key (renders-with-symbol t))
+(defun add-info-to-graph (graph pack-info system-name &key (only-package nil))
   (change-edge-color)
   (with-slots (name use-lst export-lst import-lst) pack-info
-    (push (cluster name (when renders-with-symbol export-lst))
+    (push (cluster name (unless only-package export-lst))
           (graph-parts-cluster-lst graph))
     (slet (graph-parts-edge-lst graph)
       (let ((master-name (make-master-node-name name)))
@@ -131,31 +131,55 @@ exec ros -Q -- $0 "$@"
                 it))
         (maphash (lambda (pack-name sym-lst)
                    (unless (find pack-name use-lst :test #'string=)
-                     (if renders-with-symbol
+                     (if only-package
+                         (push (edge master-name (make-master-node-name pack-name))
+                               it)
                          (dolist (elem sym-lst)
                            (push (edge master-name elem)
-                                 it))
-                         (push (edge master-name (make-master-node-name pack-name))
-                               it))))
+                                 it)))))
                  import-lst))))
   graph)
 
-(defun render-graph (graph)
-  ($render-s-dot #p"/var/www/html/esh/temp.png" "png"
+(defun render-graph (graph file)
+  ($render-s-dot file "png"
                  `($graph (($rankdir "LR"))
                           ,@(graph-parts-cluster-lst graph)
                           ,@(graph-parts-edge-lst graph))))
 
+;; ----- getopt ----- ;;
+
+(defvar *only-package* nil)
+(defvar *output* #p"temp.png")
+
+(defvar *options*
+  '((*only-package* nil "Show only packages (doesn't show symbols)" :alias ("-P"))
+    (*output* #p"temp.png" "Place the output into <file>" :alias ("-o") :params ("FILE"))))
+
+(defun print-help ()
+  (cl-cli:help *options* nil
+               :prolog "./make-package-tree.ros [OPTION]... PACKAGE-NAME"))
+
+;; ----- main ----- ;; 
+
 (defun main (&rest argv)
   (declare (ignorable argv))
-  (assert (> (length argv) 0))
-  (let ((system-name (string-upcase (car argv)))
-        (graph (make-graph-parts)))
-    (ql:quickload system-name)
-    (do ((pack-name system-name (dequeue-pack-name)))
-        ((null pack-name))
-      (print pack-name)
-      (add-info-to-graph graph
-                         (interpret-package pack-name system-name)
-                         system-name))
-    (render-graph graph)))
+  (unless (> (length argv) 0)
+    (print-help)
+    (return-from main))
+  (multiple-value-bind (names vals sub1 sub2 rest)
+      ;; cl-cli:parce-cli ignore the head of the list
+      (cl-cli:parse-cli (cons nil argv) *options*)
+    (declare (ignore sub1 sub2))
+    (cl-cli:with-environment names vals
+      (let ((system-name (string-upcase (car rest)))
+            (graph (make-graph-parts)))
+        (ql:quickload system-name)
+        (do ((pack-name system-name (dequeue-pack-name)))
+            ((null pack-name))
+          (print pack-name)
+          (add-info-to-graph graph
+                             (interpret-package pack-name system-name)
+                             system-name
+                             :only-package *only-package*))
+        (render-graph graph *output*)
+        (format t "~%~%Output to \"~A\"~%" *output*))))) 
