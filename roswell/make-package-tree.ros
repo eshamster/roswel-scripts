@@ -67,18 +67,21 @@ exec ros -Q -- $0 "$@"
 
 ;; ----- make graph ----- ;;
 
+(defvar *replace-list* '(("\\." . "_DOT_")
+                         ("\\+" . "_PLUS_")
+                         ("\\*" . "_AST_")
+                         ("-" . "_")))
+
 (defun format-name (name)
   (let ((s-name (if (symbolp name)
                     (symbol-name name)
                     name)))
     (string-upcase
-     (car (last
-           (ppcre:split
-            "\\."
-            (ppcre:regex-replace-all
-             "[\\+\\*]" 
-             (ppcre:regex-replace-all "-" s-name "_")
-             "__")))))))
+     (let ((formatted s-name))
+       (dolist (pair *replace-list*)
+         (setf formatted
+               (ppcre:regex-replace-all (car pair) formatted (cdr pair))))
+       formatted))))
 
 ;; In graphviz, because we can't directly draw edges from a cluster,
 ;; draw them from the 'master' node that has no label, instead.
@@ -107,15 +110,14 @@ exec ros -Q -- $0 "$@"
            ($color ,(edge-color)))))
 
 (defun cluster (name node-keyward-lst)
-  (let ((fname (format-name name)))
-    `($cluster (($id ,fname)
-                ($label ,fname))
-               ($node (($id ,(make-master-node-name name))
-                       ($label "")
-                       ($width "0.1")
-                       ($height "0.1")))
-               ,@(mapcar #'(lambda (elem) (node (format-name elem)))
-                         node-keyward-lst))))
+  `($cluster (($id ,(format-name name))
+              ($label ,(format-name (car (last (ppcre:split "\\." name))))))
+             ($node (($id ,(make-master-node-name name))
+                     ($label "")
+                     ($width "0.1")
+                     ($height "0.1")))
+             ,@(mapcar #'(lambda (elem) (node (format-name elem)))
+                       node-keyward-lst)))
 
 (defun add-info-to-graph (graph pack-info system-name &key (only-package nil))
   (change-edge-color)
