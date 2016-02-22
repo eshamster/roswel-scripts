@@ -23,17 +23,17 @@ exec ros -Q -- $0 "$@"
   cluster-lst
   edge-lst)
 
-;; ----- utils ----- ;;
+;; ----- manage family package lists ----- ;;
 
-(defun is-family-pack (pack-name system-name)
-  (ppcre:scan (format nil "~A.*" system-name) pack-name))
+(defun is-family-pack (pack-name)
+  (find pack-name *unprocessed-pack-list* :test #'equal))
 
 ;; Use a queue rather than a stack because I think that the depth first search (by stack) puts elder nodes in a package tree away.
 (defvar *target-pack-queue* nil)
 (defvar *processed-pack-list* nil)
 
 (defun queue-pack-name (pack-name system-name)
-  (unless (or (not (is-family-pack pack-name system-name))
+  (unless (or (not (is-family-pack pack-name))
               (find pack-name *target-pack-queue* :test #'string=)
               (find pack-name *processed-pack-list* :test #'string=))
     (setf *target-pack-queue*
@@ -43,6 +43,23 @@ exec ros -Q -- $0 "$@"
   (awhen (pop *target-pack-queue*)
     (push it *processed-pack-list*)
     it))
+
+;; load
+
+(defvar *unprocessed-pack-list* nil)
+
+(defun make-macroexpand-hook-fun (old-hook)
+  (lambda (fun form env)
+    (when (and (consp form)
+               (eq (car form) 'cl:defpackage))
+      (pushnew (symbol-name (cadr form)) *unprocessed-pack-list*
+               :test #'equal))
+    (funcall old-hook fun form env)))
+
+(defun load-target-package-list (system-name)
+  (ql:quickload system-name)
+  (let ((*macroexpand-hook* (make-macroexpand-hook-fun *macroexpand-hook*)))
+    (asdf:load-system (intern system-name "KEYWORD") :force t)))
 
 ;; ----- read file ----- ;;
 
@@ -57,7 +74,7 @@ exec ros -Q -- $0 "$@"
                  (declare (ignore found))
                  (when (eq type :external)
                    (push sym export-lst))))
-              ((is-family-pack pack-name system-name)
+              ((is-family-pack pack-name)
                (push sym (gethash pack-name import-hash))))))
     (make-package-info :name target-pack-name
                        :use-lst (mapcar #'package-name
@@ -137,7 +154,7 @@ exec ros -Q -- $0 "$@"
     (slet (graph-parts-edge-lst graph)
       (let ((master-name (make-master-node-name name)))
         (dolist (use (remove-if (lambda (pack-name)
-                                  (not (is-family-pack pack-name system-name)))
+                                  (not (is-family-pack pack-name)))
                                 use-lst))
           (push (edge master-name (make-master-node-name use))
                 it))
@@ -185,7 +202,7 @@ exec ros -Q -- $0 "$@"
     (cl-cli:with-environment names vals
       (let ((system-name (string-upcase (car rest)))
             (graph (make-graph-parts)))
-        (ql:quickload system-name)
+        (load-target-package-list system-name)
         (do ((pack-name system-name (dequeue-pack-name)))
             ((null pack-name))
           (print pack-name)
