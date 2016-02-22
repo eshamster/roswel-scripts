@@ -25,28 +25,34 @@ exec ros -Q -- $0 "$@"
 
 ;; ----- manage family package lists ----- ;;
 
-(defun is-family-pack (pack-name)
-  (find pack-name *unprocessed-pack-list* :test #'equal))
-
 ;; Use a queue rather than a stack because I think that the depth first search (by stack) puts elder nodes in a package tree away.
 (defvar *target-pack-queue* nil)
 (defvar *processed-pack-list* nil)
+(defvar *unprocessed-pack-list* nil)
 
-(defun queue-pack-name (pack-name system-name)
-  (unless (or (not (is-family-pack pack-name))
-              (find pack-name *target-pack-queue* :test #'string=)
-              (find pack-name *processed-pack-list* :test #'string=))
+(defun is-family-pack (pack-name)
+  (or (find pack-name *unprocessed-pack-list* :test #'string=)
+      (find pack-name *target-pack-queue* :test #'string=)
+      (find pack-name *processed-pack-list* :test #'string=)))
+
+(defun queue-pack-name (pack-name)
+  (when (find pack-name *unprocessed-pack-list* :test #'string=)
+    (setf *unprocessed-pack-list*
+          (remove pack-name *unprocessed-pack-list* :test #'string=))
     (setf *target-pack-queue*
           (nreverse (cons pack-name (nreverse *target-pack-queue*))))))
 
 (defun dequeue-pack-name ()
-  (awhen (pop *target-pack-queue*)
-    (push it *processed-pack-list*)
-    it))
+  (cond (*target-pack-queue*
+         (alet (pop *target-pack-queue*)
+           (push it *processed-pack-list*)
+           it))
+        (*unprocessed-pack-list*
+         (alet (pop *unprocessed-pack-list*)
+           (push it *processed-pack-list*)
+           it))))
 
 ;; load
-
-(defvar *unprocessed-pack-list* nil)
 
 (defun make-macroexpand-hook-fun (old-hook)
   (lambda (fun form env)
@@ -61,14 +67,14 @@ exec ros -Q -- $0 "$@"
   (let ((*macroexpand-hook* (make-macroexpand-hook-fun *macroexpand-hook*)))
     (asdf:load-system (intern system-name "KEYWORD") :force t)))
 
-;; ----- read file ----- ;;
+;; ----- process all symbols in a package ----- ;;
 
-(defun interpret-package (target-pack-name system-name)
+(defun interpret-package (target-pack-name)
   (let ((export-lst nil)
         (import-hash (make-hash-table)))
     (do-symbols (sym target-pack-name)
       (let ((pack-name (package-name (symbol-package sym))))
-        (queue-pack-name pack-name system-name)
+        (queue-pack-name pack-name)
         (cond ((string= pack-name target-pack-name)
                (multiple-value-bind (found type) (find-symbol (symbol-name sym) pack-name)
                  (declare (ignore found))
@@ -203,11 +209,12 @@ exec ros -Q -- $0 "$@"
       (let ((system-name (string-upcase (car rest)))
             (graph (make-graph-parts)))
         (load-target-package-list system-name)
-        (do ((pack-name system-name (dequeue-pack-name)))
+        (queue-pack-name system-name)
+        (do ((pack-name (dequeue-pack-name) (dequeue-pack-name)))
             ((null pack-name))
           (print pack-name)
           (add-info-to-graph graph
-                             (interpret-package pack-name system-name)
+                             (interpret-package pack-name)
                              system-name
                              :only-package *only-package*))
         (render-graph graph *output*)
