@@ -70,6 +70,16 @@ exec ros -Q -- $0 "$@"
 (defvar *replace-list* '(("\\." . "_DOT_")
                          ("\\+" . "_PLUS_")
                          ("\\*" . "_AST_")
+                         ("/" . "_SLASH_")
+                         ("!" . "_BANG_")
+                         ("\\[" . "_LBRACKET_")
+                         ("\\]" . "_RBRACKET_")
+                         ("\\{" . "_LBRACE_")
+                         ("\\}" . "_RBRACE_")
+                         ("%" . "_PERCENT_")
+                         ("&" . "_AMP_")
+                         ("@" . "_AT_")
+                         ("=" . "_EQ_")
                          ("-" . "_")))
 
 (defun format-name (name)
@@ -150,8 +160,8 @@ exec ros -Q -- $0 "$@"
 
 ;; ----- getopt ----- ;;
 
-(defvar *only-package* nil)
-(defvar *output* #p"temp.png")
+(defvar *only-package*)
+(defvar *output*)
 
 (defvar *options*
   '((*only-package* nil "Show only packages (doesn't show symbols)" :alias ("-P"))
@@ -169,7 +179,7 @@ exec ros -Q -- $0 "$@"
     (print-help)
     (return-from main))
   (multiple-value-bind (names vals sub1 sub2 rest)
-      ;; cl-cli:parce-cli ignore the head of the list
+      ;; Add nil to the head because cl-cli:parce-cli ignore the head of the list
       (cl-cli:parse-cli (cons nil argv) *options*)
     (declare (ignore sub1 sub2))
     (cl-cli:with-environment names vals
