@@ -63,10 +63,15 @@ exec ros -Q -- $0 "$@"
                :test #'equal))
     (funcall old-hook fun form env)))
 
+(declaim #+sbcl (sb-ext:muffle-conditions sb-ext:compiler-note))
 (defun load-target-package-list (system-name)
   (let ((*readtable* *old-readtable*))
     (ql:quickload system-name)
-    (let ((*macroexpand-hook* (make-macroexpand-hook-fun *macroexpand-hook*)))
+    (let ((*macroexpand-hook* (make-macroexpand-hook-fun *macroexpand-hook*))
+          (*load-verbose* nil)
+          (*load-print* nil)
+          (*compile-verbose* nil)
+          (*compile-print* nil))
       (asdf:load-system (intern system-name "KEYWORD") :force t))))
 
 ;; ----- process all symbols in a package ----- ;;
