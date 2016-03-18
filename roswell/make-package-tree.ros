@@ -131,7 +131,7 @@ exec ros -Q -- $0 "$@"
              ($height "0.1")))))
 
 (let* ((color-lst '("red" "blue" "black" "green" "skyblue" "gold" "brown" "gray" "Turquoise"))
-      (color-pnt color-lst))
+       (color-pnt color-lst))
   (defun edge-color ()
     (car color-pnt))
   (defun change-edge-color ()
