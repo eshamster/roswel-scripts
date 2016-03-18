@@ -5,6 +5,7 @@ exec ros -Q -- $0 "$@"
 |#
 
 (eval-when (:execute)
+  (defvar *old-readtable* (copy-readtable))
   (ql:quickload '(:anaphora :s-dot :cl-ppcre :cl-cli) :silent t)
   (use-package :anaphora)
   ;; enable to write as "$node" instead of "s-dot::node"
@@ -63,9 +64,10 @@ exec ros -Q -- $0 "$@"
     (funcall old-hook fun form env)))
 
 (defun load-target-package-list (system-name)
-  (ql:quickload system-name)
-  (let ((*macroexpand-hook* (make-macroexpand-hook-fun *macroexpand-hook*)))
-    (asdf:load-system (intern system-name "KEYWORD") :force t)))
+  (let ((*readtable* *old-readtable*))
+    (ql:quickload system-name)
+    (let ((*macroexpand-hook* (make-macroexpand-hook-fun *macroexpand-hook*)))
+      (asdf:load-system (intern system-name "KEYWORD") :force t))))
 
 ;; ----- process all symbols in a package ----- ;;
 
