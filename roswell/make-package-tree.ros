@@ -152,7 +152,7 @@ exec ros -Q -- $0 "$@"
              ,@(mapcar #'(lambda (elem) (node (format-name elem)))
                        node-keyward-lst)))
 
-(defun add-info-to-graph (graph pack-info system-name &key (only-package nil))
+(defun add-info-to-graph (graph pack-info &key (only-package nil))
   (change-edge-color)
   (with-slots (name use-lst export-lst import-lst) pack-info
     (push (cluster name (unless only-package export-lst))
@@ -215,7 +215,6 @@ exec ros -Q -- $0 "$@"
           (print pack-name)
           (add-info-to-graph graph
                              (interpret-package pack-name)
-                             system-name
                              :only-package *only-package*))
         (render-graph graph *output*)
         (format t "~%~%Output to \"~A\"~%" *output*))))) 
