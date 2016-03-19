@@ -59,8 +59,10 @@ exec ros -Q -- $0 "$@"
   (lambda (fun form env)
     (when (and (consp form)
                (eq (car form) 'cl:defpackage))
-      (pushnew (symbol-name (cadr form)) *unprocessed-pack-list*
-               :test #'equal))
+      (let ((name (cadr form)))
+        (pushnew (if (stringp name) name (symbol-name name))
+                 *unprocessed-pack-list*
+                 :test #'equal)))
     (funcall old-hook fun form env)))
 
 (declaim #+sbcl (sb-ext:muffle-conditions sb-ext:compiler-note))
