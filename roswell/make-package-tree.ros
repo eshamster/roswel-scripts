@@ -112,7 +112,9 @@ exec ros -Q -- $0 "$@"
                          ("&" . "_AMP_")
                          ("@" . "_AT_")
                          ("=" . "_EQ_")
-                         ("-" . "_")))
+                         ("-" . "_")
+                         (">" . "_GT_")
+                         ("<" . "_LT_")))
 
 (defun format-name (name)
   (let ((s-name (if (symbolp name)
