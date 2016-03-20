@@ -59,10 +59,8 @@ exec ros -Q -- $0 "$@"
   (lambda (fun form env)
     (when (and (consp form)
                (eq (car form) 'cl:defpackage))
-      (let ((name (cadr form)))
-        (pushnew (if (stringp name) name (symbol-name name))
-                 *unprocessed-pack-list*
-                 :test #'equal)))
+      (pushnew (cadr form) *unprocessed-pack-list*
+               :test #'string=))
     (funcall old-hook fun form env)))
 
 (declaim #+sbcl (sb-ext:muffle-conditions sb-ext:compiler-note))
@@ -75,6 +73,15 @@ exec ros -Q -- $0 "$@"
           (*compile-verbose* nil)
           (*compile-print* nil))
       (asdf:load-system (intern system-name "KEYWORD") :force t))))
+
+(defun exclude-target-list (exclude-list)
+  (dolist (pack exclude-list)
+    (if (find pack *unprocessed-pack-list*
+              :test #'string=)
+        (setf *unprocessed-pack-list*
+              (delete pack *unprocessed-pack-list*
+                      :test #'string=))
+        (error "The package \"~A\" is not a package in the system" pack))))
 
 ;; ----- process all symbols in a package ----- ;;
 
@@ -154,14 +161,15 @@ exec ros -Q -- $0 "$@"
            ($color ,(edge-color)))))
 
 (defun cluster (name node-keyward-lst)
-  `($cluster (($id ,(format-name name))
-              ($label ,(format-name (car (last (ppcre:split "\\." name))))))
-             ($node (($id ,(make-master-node-name name))
-                     ($label "")
-                     ($width "0.1")
-                     ($height "0.1")))
-             ,@(mapcar #'(lambda (elem) (node (format-name elem)))
-                       node-keyward-lst)))
+  (let ((s-name (format nil "~A" name)))
+    `($cluster (($id ,(format-name s-name))
+                ($label ,(format-name (car (last (ppcre:split "\\." s-name))))))
+               ($node (($id ,(make-master-node-name s-name))
+                       ($label "")
+                       ($width "0.1")
+                       ($height "0.1")))
+               ,@(mapcar #'(lambda (elem) (node (format-name elem)))
+                         node-keyward-lst))))
 
 (defun add-info-to-graph (graph pack-info &key (only-package nil))
   (change-edge-color)
@@ -196,14 +204,20 @@ exec ros -Q -- $0 "$@"
 
 (defvar *only-package*)
 (defvar *output*)
+(defvar *exclude*)
 
 (defvar *options*
   '((*only-package* nil "Show only packages (doesn't show symbols)" :alias ("-P"))
-    (*output* #p"temp.png" "Place the output into <file>" :alias ("-o") :params ("FILE"))))
+    (*output* #p"temp.png" "Place the output into <file>" :alias ("-o") :params ("FILE"))
+    (*exclude* nil "Exclude packages from graph (if you exclude multiple packages, write them separating by space)" :alias ("-e") :params ("Package names"))))
 
 (defun print-help ()
   (cl-cli:help *options* nil
                :prolog "./make-package-tree.ros [OPTION]... PACKAGE-NAME"))
+
+(defun parse-exclude-target-list (arg-exclude)
+  (mapcar #'string-upcase
+          (ppcre:split " " arg-exclude)))
 
 ;; ----- main ----- ;; 
 
@@ -220,10 +234,12 @@ exec ros -Q -- $0 "$@"
       (let ((system-name (string-upcase (car rest)))
             (graph (make-graph-parts)))
         (load-target-package-list system-name)
+        (exclude-target-list (parse-exclude-target-list *exclude*))
         (queue-pack-name system-name)
         (do ((pack-name (dequeue-pack-name) (dequeue-pack-name)))
             ((null pack-name))
-          (print pack-name)
+          (princ pack-name)
+          (terpri)
           (add-info-to-graph graph
                              (interpret-package pack-name)
                              :only-package *only-package*))
