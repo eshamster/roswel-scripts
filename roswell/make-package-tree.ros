@@ -219,6 +219,18 @@ exec ros -Q -- $0 "$@"
   (mapcar #'string-upcase
           (ppcre:split " " arg-exclude)))
 
+(defun parse-args (argv)
+  (let ((mod-argv (append (mapcan (lambda (arg)
+                                    (if (ppcre:scan "^--" arg)
+                                        (ppcre:split "=" arg :limit 2)
+                                        (list arg)))
+                                  argv))))
+    (multiple-value-bind (names vals sub1 sub2 rest)
+        ;; Add nil to the head because cl-cli:parce-cli ignore the head of the list
+        (cl-cli:parse-cli (cons nil mod-argv) *options*)
+      (declare (ignore sub1 sub2))
+      (values names vals rest))))
+
 ;; ----- main ----- ;; 
 
 (defun main (&rest argv)
@@ -226,10 +238,7 @@ exec ros -Q -- $0 "$@"
   (unless (> (length argv) 0)
     (print-help)
     (return-from main))
-  (multiple-value-bind (names vals sub1 sub2 rest)
-      ;; Add nil to the head because cl-cli:parce-cli ignore the head of the list
-      (cl-cli:parse-cli (cons nil argv) *options*)
-    (declare (ignore sub1 sub2))
+  (multiple-value-bind (names vals rest) (parse-args argv)
     (cl-cli:with-environment names vals
       (let ((system-name (string-upcase (car rest)))
             (graph (make-graph-parts)))
