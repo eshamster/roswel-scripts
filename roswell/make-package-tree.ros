@@ -213,7 +213,7 @@ exec ros -Q -- $0 "$@"
 
 (defun print-help ()
   (cl-cli:help *options* nil
-               :prolog "./make-package-tree.ros [OPTION]... PACKAGE-NAME"))
+               :prolog "./make-package-tree.ros [OPTION]... SYSTEM-NAME"))
 
 (defun parse-exclude-target-list (arg-exclude)
   (mapcar #'string-upcase
